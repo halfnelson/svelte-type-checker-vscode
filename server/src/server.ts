@@ -1,8 +1,3 @@
-/* --------------------------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation. All rights reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
- * ------------------------------------------------------------------------------------------ */
-
 import {
 	createConnection,
 	TextDocuments,
@@ -69,35 +64,32 @@ connection.onInitialized(() => {
 	}
 });
 
-// The example settings
-interface ExampleSettings {
-	maxNumberOfProblems: number;
-}
+
+interface Settings {}
 
 // The global settings, used when the `workspace/configuration` request is not supported by the client.
-// Please note that this is not the case when using this server with the client provided in this example
-// but could happen with other clients.
-const defaultSettings: ExampleSettings = { maxNumberOfProblems: 1000 };
-let globalSettings: ExampleSettings = defaultSettings;
+
+const defaultSettings: Settings = { };
+let globalSettings: Settings = defaultSettings;
 
 // Cache the settings of all open documents
-let documentSettings: Map<string, Thenable<ExampleSettings>> = new Map();
+let documentSettings: Map<string, Thenable<Settings>> = new Map();
 
 connection.onDidChangeConfiguration(change => {
 	if (hasConfigurationCapability) {
 		// Reset all cached document settings
 		documentSettings.clear();
 	} else {
-		globalSettings = <ExampleSettings>(
+		globalSettings = <Settings>(
 			(change.settings.languageServerExample || defaultSettings)
 		);
 	}
 
 	// Revalidate all open text documents
-	documents.all().forEach(validateTextDocument);
+	documents.all().forEach(validateSvelteDocument);
 });
 
-function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
+function getDocumentSettings(resource: string): Thenable<Settings> {
 	if (!hasConfigurationCapability) {
 		return Promise.resolve(globalSettings);
 	}
@@ -105,7 +97,7 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
 	if (!result) {
 		result = connection.workspace.getConfiguration({
 			scopeUri: resource,
-			section: 'languageServerExample'
+			section: 'svelte-type-checker'
 		});
 		documentSettings.set(resource, result);
 	}
@@ -117,30 +109,30 @@ documents.onDidClose(e => {
 	documentSettings.delete(e.document.uri);
 });
 
-// The content of a text document has changed. This event is emitted
+// The content of a document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent(change => {
-	validateTextDocument(change.document);
+	validateSvelteDocument(change.document);
 });
 
-async function validateTextDocument(textDocument: TextDocument): Promise<void> {
+async function validateSvelteDocument(svelteDocument: TextDocument): Promise<void> {
 	// In this simple example we get the settings for every validate run.
-	let settings = await getDocumentSettings(textDocument.uri);
+	let settings = await getDocumentSettings(svelteDocument.uri);
 
 	// The validator creates diagnostics for all uppercase words length 2 and more
-	let text = textDocument.getText();
+	let text = svelteDocument.getText();
 	let pattern = /\b[A-Z]{2,}\b/g;
 	let m: RegExpExecArray | null;
 
 	let problems = 0;
 	let diagnostics: Diagnostic[] = [];
-	while ((m = pattern.exec(text)) && problems < settings.maxNumberOfProblems) {
+	while ((m = pattern.exec(text))) {
 		problems++;
 		let diagnostic: Diagnostic = {
 			severity: DiagnosticSeverity.Warning,
 			range: {
-				start: textDocument.positionAt(m.index),
-				end: textDocument.positionAt(m.index + m[0].length)
+				start: svelteDocument.positionAt(m.index),
+				end: svelteDocument.positionAt(m.index + m[0].length)
 			},
 			message: `${m[0]} is all uppercase.`,
 			source: 'ex'
@@ -149,14 +141,14 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 			diagnostic.relatedInformation = [
 				{
 					location: {
-						uri: textDocument.uri,
+						uri: svelteDocument.uri,
 						range: Object.assign({}, diagnostic.range)
 					},
 					message: 'Spelling matters'
 				},
 				{
 					location: {
-						uri: textDocument.uri,
+						uri: svelteDocument.uri,
 						range: Object.assign({}, diagnostic.range)
 					},
 					message: 'Particularly for names'
@@ -167,13 +159,8 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
 	}
 
 	// Send the computed diagnostics to VSCode.
-	connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+	connection.sendDiagnostics({ uri: svelteDocument.uri, diagnostics });
 }
-
-connection.onDidChangeWatchedFiles(_change => {
-	// Monitored files have change in VSCode
-	connection.console.log('We received an file change event');
-});
 
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
