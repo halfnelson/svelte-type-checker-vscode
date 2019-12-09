@@ -1,25 +1,20 @@
-import ts from 'typescript';
+import * as ts from 'typescript';
 import { DocumentSnapshot } from './DocumentSnapshot';
-import { isSvelte } from '../typescript/utils';
 import { dirname, resolve } from 'path';
-import { Document } from '../../api';
 import { RawSourceMap } from 'source-map';
-
+import { TextDocument } from 'vscode-languageserver';
+import { URI } from 'vscode-uri' 
 
 export interface LanguageServiceContainer {
-    updateDocument(document: Document): ts.LanguageService;
-    getSourceMap(document: Document): RawSourceMap | undefined;
+    languageService: ts.LanguageService;
+    updateDocument(document: TextDocument): void;
+    getSourceMap(document: TextDocument): RawSourceMap | undefined;
 }
 
 const services = new Map<string, LanguageServiceContainer>();
 
-export type CreateDocument = (fileName: string, content: string) => Document;
-
-export function getLanguageServiceForDocument(
-    document: Document,
-    createDocument: CreateDocument,
-): ts.LanguageService {
-    const searchDir = dirname(document.getFilePath()!);
+function serviceContainerForDocument(document: TextDocument): LanguageServiceContainer {
+    const searchDir = dirname(URI.parse(document.uri).fsPath);
     const tsconfigPath =
         ts.findConfigFile(searchDir, ts.sys.fileExists, 'tsconfig.json') ||
         ts.findConfigFile(searchDir, ts.sys.fileExists, 'jsconfig.json') ||
@@ -29,36 +24,19 @@ export function getLanguageServiceForDocument(
     if (services.has(tsconfigPath)) {
         service = services.get(tsconfigPath)!;
     } else {
-        service = createLanguageService(tsconfigPath, createDocument);
+        service = createLanguageService(tsconfigPath);
         services.set(tsconfigPath, service);
     }
 
-    return service.updateDocument(document);
+    return service;
 }
 
-export function getSourceMapForDocument(
-    document: Document
-): RawSourceMap | undefined {
-    const searchDir = dirname(document.getFilePath()!);
-    const tsconfigPath =
-        ts.findConfigFile(searchDir, ts.sys.fileExists, 'tsconfig.json') ||
-        ts.findConfigFile(searchDir, ts.sys.fileExists, 'jsconfig.json') ||
-        '';
-
-    let service: LanguageServiceContainer;
-    if (services.has(tsconfigPath)) {
-        service = services.get(tsconfigPath)!;
-    }  else {
-        return undefined;
-    }
-
-    return service.getSourceMap(document);
+export function getOrCreateLanguageServiceForDocument(document: TextDocument): LanguageServiceContainer {
+    return serviceContainerForDocument(document) 
 }
 
-export function createLanguageService(
-    tsconfigPath: string,
-    createDocument: CreateDocument,
-): LanguageServiceContainer {
+export function createLanguageService(tsconfigPath: string): LanguageServiceContainer {
+
     const workspacePath = tsconfigPath ? dirname(tsconfigPath) : '';
     const documents = new Map<string, DocumentSnapshot>();
 
@@ -99,7 +77,7 @@ export function createLanguageService(
     }
 
     compilerOptions = { ...compilerOptions, ...forcedOptions }
-    const svelteTsPath = dirname(require.resolve('ts-svelte'))
+    const svelteTsPath = dirname(require.resolve('svelte2tsx'))
     const svelteTsxFiles = ['./svelte-shims.d.ts', './svelte-jsx.d.ts'].map(f => ts.sys.resolvePath(resolve(svelteTsPath, f)));
 
     const host: ts.LanguageServiceHost = {
@@ -147,19 +125,19 @@ export function createLanguageService(
     let languageService = ts.createLanguageService(host);
 
     return {
+        languageService,
         updateDocument,
         getSourceMap
     };
 
-    function updateDocument(document: Document): ts.LanguageService {
+    function updateDocument(document: TextDocument) {
       //  console.log("update document", document.getFilePath());
         const newSnapshot = DocumentSnapshot.fromDocument(document);
-        documents.set(useSvelteTsxName(document.getFilePath()!), newSnapshot);
-        return languageService;
+        documents.set(useSvelteTsxName(URI.parse(document.uri).fsPath), newSnapshot);
     }
 
-    function getSourceMap(document: Document): RawSourceMap | undefined {
-        let snap = getSvelteSnapshot(document.getFilePath()!+".tsx");
+    function getSourceMap(document: TextDocument): RawSourceMap | undefined {
+        let snap = getSvelteSnapshot(URI.parse(document.uri).fsPath+".tsx");
         if (!snap) return;
         return snap.map;
     }
@@ -173,7 +151,7 @@ export function createLanguageService(
         if (isSvelteTsx(fileName)) {
             const originalName = originalNameFromSvelteTsx(fileName);
             const doc = DocumentSnapshot.fromDocument(
-                createDocument(originalName, ts.sys.readFile(originalName) || ''))
+                TextDocument.create(URI.file(originalName).toString(), '', 0, ts.sys.readFile(originalName) || ''))
             documents.set(fileName, doc);
             return doc;
         }
@@ -182,6 +160,11 @@ export function createLanguageService(
     function isSvelteTsx(fileName: string): boolean {
         return fileName.endsWith('.svelte.tsx');
     }
+
+    function isSvelte(fileName: string): boolean {
+        return fileName.endsWith(".svelte");
+    }
+
 
     function originalNameFromSvelteTsx(filename: string) {
         return filename.substring(0, filename.length -'.tsx'.length)

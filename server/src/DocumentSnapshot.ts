@@ -1,7 +1,7 @@
-import ts from 'typescript';
-import { Document } from '../../api';
+import * as ts from 'typescript';
 import { RawSourceMap } from 'source-map';
-import { svelte2tsx } from 'ts-svelte'
+import svelte2tsx from 'svelte2tsx'
+import { TextDocument } from 'vscode-languageserver';
 
 export interface DocumentSnapshot extends ts.IScriptSnapshot {
     version: number;
@@ -10,7 +10,7 @@ export interface DocumentSnapshot extends ts.IScriptSnapshot {
 }
 
 export namespace DocumentSnapshot {
-    export function fromDocument(document: Document): DocumentSnapshot {
+    export function fromDocument(document: TextDocument): DocumentSnapshot {
         const text = document.getText();
         let tsxSource = '';
         let tsxMap = undefined;
@@ -19,9 +19,9 @@ export namespace DocumentSnapshot {
             tsxSource = tsx.code;
             tsxMap = tsx.map;
         } catch (e) {
-            console.error("Couldn't convert to tsx", e);
+            console.error(`Couldn't convert ${document.uri} to tsx`, e);
         }
-        console.info(`converted ${document.getFilePath()} to tsx`);
+        console.info(`converted ${document.uri} to tsx`);
               
         const length = tsxSource.length;
 

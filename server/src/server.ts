@@ -1,16 +1,17 @@
 import {
 	createConnection,
 	TextDocuments,
-	TextDocument,
-	Diagnostic,
-	DiagnosticSeverity,
 	ProposedFeatures,
 	InitializeParams,
-	DidChangeConfigurationNotification,
-	CompletionItem,
-	CompletionItemKind,
-	TextDocumentPositionParams
+	TextDocument,
+	Diagnostic,
+	Range,
+	DiagnosticSeverity
 } from 'vscode-languageserver';
+import { SourceMapConsumer } from 'source-map';
+import { getOrCreateLanguageServiceForDocument } from './LanguageService';
+import { URI } from 'vscode-uri';
+import * as ts from 'typescript';
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -20,21 +21,16 @@ let connection = createConnection(ProposedFeatures.all);
 // supports full document sync only
 let documents: TextDocuments = new TextDocuments();
 
-let hasConfigurationCapability: boolean = false;
-let hasWorkspaceFolderCapability: boolean = false;
+//source map decoders for each text document
+let consumers = new Map<TextDocument, { version: number, consumer: SourceMapConsumer }>();
+
+
+
 let hasDiagnosticRelatedInformationCapability: boolean = false;
 
 connection.onInitialize((params: InitializeParams) => {
 	let capabilities = params.capabilities;
 
-	// Does the client support the `workspace/configuration` request?
-	// If not, we will fall back using global settings
-	hasConfigurationCapability = !!(
-		capabilities.workspace && !!capabilities.workspace.configuration
-	);
-	hasWorkspaceFolderCapability = !!(
-		capabilities.workspace && !!capabilities.workspace.workspaceFolders
-	);
 	hasDiagnosticRelatedInformationCapability = !!(
 		capabilities.textDocument &&
 		capabilities.textDocument.publishDiagnostics &&
@@ -45,76 +41,124 @@ connection.onInitialize((params: InitializeParams) => {
 		capabilities: {
 			textDocumentSync: documents.syncKind,
 			// Tell the client that the server supports code completion
-			completionProvider: {
-				resolveProvider: true
-			}
+			/*	completionProvider: {
+					resolveProvider: true
+				} */
 		}
 	};
 });
 
 connection.onInitialized(() => {
-	if (hasConfigurationCapability) {
-		// Register for all configuration changes.
-		connection.client.register(DidChangeConfigurationNotification.type, undefined);
-	}
-	if (hasWorkspaceFolderCapability) {
-		connection.workspace.onDidChangeWorkspaceFolders(_event => {
-			connection.console.log('Workspace folder change event received.');
-		});
-	}
-});
 
-
-interface Settings {}
-
-// The global settings, used when the `workspace/configuration` request is not supported by the client.
-
-const defaultSettings: Settings = { };
-let globalSettings: Settings = defaultSettings;
-
-// Cache the settings of all open documents
-let documentSettings: Map<string, Thenable<Settings>> = new Map();
-
-connection.onDidChangeConfiguration(change => {
-	if (hasConfigurationCapability) {
-		// Reset all cached document settings
-		documentSettings.clear();
-	} else {
-		globalSettings = <Settings>(
-			(change.settings.languageServerExample || defaultSettings)
-		);
-	}
-
-	// Revalidate all open text documents
-	documents.all().forEach(validateSvelteDocument);
-});
-
-function getDocumentSettings(resource: string): Thenable<Settings> {
-	if (!hasConfigurationCapability) {
-		return Promise.resolve(globalSettings);
-	}
-	let result = documentSettings.get(resource);
-	if (!result) {
-		result = connection.workspace.getConfiguration({
-			scopeUri: resource,
-			section: 'svelte-type-checker'
-		});
-		documentSettings.set(resource, result);
-	}
-	return result;
-}
-
-// Only keep settings for open documents
-documents.onDidClose(e => {
-	documentSettings.delete(e.document.uri);
 });
 
 // The content of a document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
-documents.onDidChangeContent(change => {
-	validateSvelteDocument(change.document);
+documents.onDidChangeContent(async change => {
+	const { updateDocument } = getOrCreateLanguageServiceForDocument(change.document);
+	updateDocument(change.document);
+
+	let diagnostics = await getDiagnostics(change.document);
+	connection.sendDiagnostics({ uri: change.document.uri, diagnostics });
 });
 
+
+
+
+async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
+
+	const { languageService: lang, getSourceMap } = getOrCreateLanguageServiceForDocument(document);
+
+	const documentPath = URI.parse(document.uri).fsPath;
+	const svelteTsxPath = documentPath + ".tsx";
+
+	let diagnostics: ts.Diagnostic[] = [
+		...lang.getSyntacticDiagnostics(svelteTsxPath),
+		...lang.getSuggestionDiagnostics(svelteTsxPath),
+	];
+	diagnostics.push(...lang.getSemanticDiagnostics(svelteTsxPath));
+
+	let sourceMap = getSourceMap(document);
+
+	let decoder: { version: number, consumer: SourceMapConsumer } | undefined = undefined;
+	if (sourceMap) {
+		decoder = consumers.get(document);
+		if (!decoder || decoder.version != document.version) {
+			decoder = { version: document.version, consumer: await new SourceMapConsumer(sourceMap) };
+			consumers.set(document, decoder);
+		}
+	} else {
+		console.log("Couldn't get sourcemap for document", documentPath);
+	}
+
+	return diagnostics.map(diagnostic => ({
+		range: mapDiagnosticLocationToRange(diagnostic, document, decoder && decoder.consumer),
+		severity: mapSeverity(diagnostic.category),
+		source: 'svelte-type-checker',
+		message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+		code: diagnostic.code,
+	} as Diagnostic));
+}
+
+export function mapSeverity(category: ts.DiagnosticCategory): DiagnosticSeverity {
+    switch (category) {
+        case ts.DiagnosticCategory.Error:
+            return DiagnosticSeverity.Error;
+        case ts.DiagnosticCategory.Warning:
+            return DiagnosticSeverity.Warning;
+        case ts.DiagnosticCategory.Suggestion:
+            return DiagnosticSeverity.Hint;
+        case ts.DiagnosticCategory.Message:
+            return DiagnosticSeverity.Information;
+    }
+
+    return DiagnosticSeverity.Error;
+}
+
+const emptyRange:Range = { start: { line: 0, character: 0}, end: {line: 0, character: 0} };
+
+function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic, document: TextDocument, sourceMap?: SourceMapConsumer): Range {
+	if (!diagnostic.file) {
+		console.log("No diagnostic file, using convertRange")
+		return emptyRange;
+	}
+
+	if (typeof diagnostic.start != "number") return emptyRange;
+
+	let start = ts.getLineAndCharacterOfPosition(diagnostic.file, diagnostic.start);
+
+	start.character = start.character;
+	start.line = start.line;
+
+	let end;
+	if (typeof diagnostic.length == "number") {
+		end = ts.getLineAndCharacterOfPosition(diagnostic.file, diagnostic.start + diagnostic.length);
+		end.character = end.character;
+		end.line = end.line;
+	} else {
+		end = {
+			line: start.line,
+			character: start.character,
+		} as ts.LineAndCharacter
+	}
+
+
+	if (sourceMap) {
+		for (let pos of [start, end]) {
+			let res = sourceMap.originalPositionFor({ line: pos.line + 1, column: pos.character + 1 })
+			if (res != null) {
+				pos.line = (res.line || 1) - 1;
+				pos.character = (res.column || 1) - 1;
+			}
+		}
+	}
+	return { start, end }
+}
+
+
+
+
+/*
 async function validateSvelteDocument(svelteDocument: TextDocument): Promise<void> {
 	// In this simple example we get the settings for every validate run.
 	let settings = await getDocumentSettings(svelteDocument.uri);
@@ -162,6 +206,7 @@ async function validateSvelteDocument(svelteDocument: TextDocument): Promise<voi
 	connection.sendDiagnostics({ uri: svelteDocument.uri, diagnostics });
 }
 
+
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
 	(_textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
@@ -197,7 +242,7 @@ connection.onCompletionResolve(
 		return item;
 	}
 );
-
+*/
 /*
 connection.onDidOpenTextDocument((params) => {
 	// A text document got opened in VSCode.
