@@ -5,13 +5,21 @@ import {
 	InitializeParams,
 	TextDocument,
 	Diagnostic,
+	Position,
 	Range,
-	DiagnosticSeverity
+	DiagnosticSeverity,
+	TextDocumentPositionParams,
+	CompletionItem,
+	CompletionItemKind,
+	DidChangeWorkspaceFoldersNotification,
+	TextEdit
 } from 'vscode-languageserver';
 import { SourceMapConsumer } from 'source-map';
-import { getOrCreateLanguageServiceForDocument } from './LanguageService';
+import { serviceContainerForUri } from './LanguageService';
 import { URI } from 'vscode-uri';
 import * as ts from 'typescript';
+import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri } from './util';
+
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -20,9 +28,6 @@ let connection = createConnection(ProposedFeatures.all);
 // Create a simple text document manager. The text document manager
 // supports full document sync only
 let documents: TextDocuments = new TextDocuments();
-
-//source map decoders for each text document
-let consumers = new Map<TextDocument, { version: number, consumer: SourceMapConsumer }>();
 
 
 
@@ -41,9 +46,9 @@ connection.onInitialize((params: InitializeParams) => {
 		capabilities: {
 			textDocumentSync: documents.syncKind,
 			// Tell the client that the server supports code completion
-			/*	completionProvider: {
+			completionProvider: {
 					resolveProvider: true
-				} */
+			} 
 		}
 	};
 });
@@ -55,8 +60,8 @@ connection.onInitialized(() => {
 // The content of a document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent(async change => {
-	const { updateDocument } = getOrCreateLanguageServiceForDocument(change.document);
-	updateDocument(change.document);
+	const { updateSnapshot } = serviceContainerForUri(change.document.uri);
+	updateSnapshot(change.document.uri, change.document.getText(), change.document.version);
 
 	let diagnostics = await getDiagnostics(change.document);
 	connection.sendDiagnostics({ uri: change.document.uri, diagnostics });
@@ -64,12 +69,11 @@ documents.onDidChangeContent(async change => {
 
 
 
-
 async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
 
-	const { languageService: lang, getSourceMap } = getOrCreateLanguageServiceForDocument(document);
+	const { languageService: lang } = serviceContainerForUri(document.uri);
 
-	const documentPath = URI.parse(document.uri).fsPath;
+	const documentPath = uriToFilePath(document.uri);
 	const svelteTsxPath = documentPath + ".tsx";
 
 	let diagnostics: ts.Diagnostic[] = [
@@ -78,21 +82,8 @@ async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
 	];
 	diagnostics.push(...lang.getSemanticDiagnostics(svelteTsxPath));
 
-	let sourceMap = getSourceMap(document);
-
-	let decoder: { version: number, consumer: SourceMapConsumer } | undefined = undefined;
-	if (sourceMap) {
-		decoder = consumers.get(document);
-		if (!decoder || decoder.version != document.version) {
-			decoder = { version: document.version, consumer: await new SourceMapConsumer(sourceMap) };
-			consumers.set(document, decoder);
-		}
-	} else {
-		console.log("Couldn't get sourcemap for document", documentPath);
-	}
-
 	return diagnostics.map(diagnostic => ({
-		range: mapDiagnosticLocationToRange(diagnostic, document, decoder && decoder.consumer),
+		range: mapDiagnosticLocationToRange(diagnostic),
 		severity: mapSeverity(diagnostic.category),
 		source: 'svelte-type-checker',
 		message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
@@ -117,115 +108,123 @@ export function mapSeverity(category: ts.DiagnosticCategory): DiagnosticSeverity
 
 const emptyRange:Range = { start: { line: 0, character: 0}, end: {line: 0, character: 0} };
 
-function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic, document: TextDocument, sourceMap?: SourceMapConsumer): Range {
-	if (!diagnostic.file) {
-		console.log("No diagnostic file, using convertRange")
-		return emptyRange;
-	}
 
-	if (typeof diagnostic.start != "number") return emptyRange;
-
-	let start = ts.getLineAndCharacterOfPosition(diagnostic.file, diagnostic.start);
-
-	start.character = start.character;
-	start.line = start.line;
-
-	let end;
-	if (typeof diagnostic.length == "number") {
-		end = ts.getLineAndCharacterOfPosition(diagnostic.file, diagnostic.start + diagnostic.length);
-		end.character = end.character;
-		end.line = end.line;
-	} else {
-		end = {
-			line: start.line,
-			character: start.character,
-		} as ts.LineAndCharacter
-	}
+async function lineAndCharacterToOriginalPosition(uri: string, pos: ts.LineAndCharacter): Promise<ts.LineAndCharacter | undefined> {
+	let { getSnapshot } = serviceContainerForUri(uri);
+	let snap = getSnapshot(uri);
+	let mapper = await snap.getMapper();
+	return mapper.getOriginalPosition(pos);
+}
 
 
-	if (sourceMap) {
-		for (let pos of [start, end]) {
-			let res = sourceMap.originalPositionFor({ line: pos.line + 1, column: pos.character + 1 })
-			if (res != null) {
-				pos.line = (res.line || 1) - 1;
-				pos.character = (res.column || 1) - 1;
-			}
-		}
-	}
-	return { start, end }
+
+function offsetToOriginalPosition(file: ts.SourceFile, offset: number): Promise<ts.LineAndCharacter | undefined> {
+	let fileUri = filePathToUri(file.fileName);
+	let pos = file.getLineAndCharacterOfPosition(offset);
+	return lineAndCharacterToOriginalPosition(fileUri, pos);
 }
 
 
 
 
-/*
-async function validateSvelteDocument(svelteDocument: TextDocument): Promise<void> {
-	// In this simple example we get the settings for every validate run.
-	let settings = await getDocumentSettings(svelteDocument.uri);
 
-	// The validator creates diagnostics for all uppercase words length 2 and more
-	let text = svelteDocument.getText();
-	let pattern = /\b[A-Z]{2,}\b/g;
-	let m: RegExpExecArray | null;
+async function mapSpanToOriginalRange(file: ts.SourceFile, start: number | undefined, length: number | undefined ): Promise<Range> {
+	if (typeof start != "number") return emptyRange;
 
-	let problems = 0;
-	let diagnostics: Diagnostic[] = [];
-	while ((m = pattern.exec(text))) {
-		problems++;
-		let diagnostic: Diagnostic = {
-			severity: DiagnosticSeverity.Warning,
-			range: {
-				start: svelteDocument.positionAt(m.index),
-				end: svelteDocument.positionAt(m.index + m[0].length)
-			},
-			message: `${m[0]} is all uppercase.`,
-			source: 'ex'
-		};
-		if (hasDiagnosticRelatedInformationCapability) {
-			diagnostic.relatedInformation = [
-				{
-					location: {
-						uri: svelteDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Spelling matters'
-				},
-				{
-					location: {
-						uri: svelteDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Particularly for names'
-				}
-			];
-		}
-		diagnostics.push(diagnostic);
+	
+	let startPos = await offsetToOriginalPosition(file, start);
+	if (!startPos) return emptyRange;
+
+	let endPos: ts.LineAndCharacter | undefined;
+	if (typeof length == "number") {
+		endPos =  await offsetToOriginalPosition(file, start + length);
+	} 
+	endPos = endPos || {
+			line: startPos.line,
+			character: startPos.character,
 	}
 
-	// Send the computed diagnostics to VSCode.
-	connection.sendDiagnostics({ uri: svelteDocument.uri, diagnostics });
+	return { start: startPos, end: endPos }
+}
+
+
+
+async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Range {
+	if (!diagnostic.file) {
+		console.log("No diagnostic file, using emptyRange")
+		return emptyRange;
+	}
+
+	return mapSpanToOriginalRange(diagnostic.file, diagnostic.start, diagnostic.length)
+
 }
 
 
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
-	(_textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
-		// The pass parameter contains the position of the text document in
-		// which code complete got requested. For the example we ignore this
-		// info and always provide the same completion items.
-		return [
-			{
-				label: 'TypeScript',
-				kind: CompletionItemKind.Text,
-				data: 1
-			},
-			{
-				label: 'JavaScript',
-				kind: CompletionItemKind.Text,
-				data: 2
+		async (_textDocumentPosition: TextDocumentPositionParams): Promise<CompletionItem[]> => {
+		
+		let document = documents.get(_textDocumentPosition.textDocument.uri);
+
+		if (!document) {
+			console.error("couldn't find document for completion", _textDocumentPosition.textDocument.uri);
+			return [];
+		};
+
+		const {languageService, getSourceMap, updateSvelteSnapshot: updateDocument } = getOrCreateLanguageServiceForDocument(document);
+//		let snapshot = updateDocument(document);
+		let decoder = await getSourceMapConsumer(document);
+
+		let svelteTsxPath = URI.parse(document.uri).fsPath + ".tsx";
+		let offset = document.offsetAt(_textDocumentPosition.position);
+
+		if (decoder) {
+			let program = languageService.getProgram();
+			if (!program) {
+				console.log("Couldn't get program for completion for ", document.uri);
+				return [];
 			}
-		];
-	}
+			let source = program.getSourceFile(svelteTsxPath)!
+			if (!source) {
+				console.log("Couldn't get source file for ", document.uri);
+				return [];
+			}
+
+			let pos = decoder.generatedPositionFor({column: _textDocumentPosition.position.character, line: _textDocumentPosition.position.line + 1, source: document.uri });
+			offset = source.getPositionOfLineAndCharacter(pos.line - 1, pos.column);
+		}
+
+		//updateDocument(document);
+		let completions = languageService.getCompletionsAtPosition(svelteTsxPath, offset, {});
+		if (!completions) {
+			console.log("Couldn't get completions from offset", offset, "for file", svelteTsxPath);
+			return [];
+		}
+		
+		// The pass parameter contains the position of the text document in
+		// which code omplete got requested. For the example we ignore this
+		// info and always provide the same completion items.
+
+	
+		
+		
+		return completions.entries.map( (c, i) => {
+			let textEdit = undefined;
+			if (c.replacementSpan) {
+				textEdit = TextEdit.replace(Range.create(c.replacementSpan.start, c.replacementSpan.start + c.replacementSpan.length), c.insertText || c.name);
+			}
+			
+
+			return {
+				label: c.name,
+				kind: ScriptElementKindToCompletionItemKind(c.kind),
+				sortText: c.sortText,
+				insertText: c.insertText,
+				textEdit: c.replacementSpan
+			
+			} as CompletionItem
+		})
+		
 );
 
 // This handler resolves additional information for the item selected in
@@ -242,26 +241,6 @@ connection.onCompletionResolve(
 		return item;
 	}
 );
-*/
-/*
-connection.onDidOpenTextDocument((params) => {
-	// A text document got opened in VSCode.
-	// params.textDocument.uri uniquely identifies the document. For documents store on disk this is a file URI.
-	// params.textDocument.text the initial full content of the document.
-	connection.console.log(`${params.textDocument.uri} opened.`);
-});
-connection.onDidChangeTextDocument((params) => {
-	// The content of a text document did change in VSCode.
-	// params.textDocument.uri uniquely identifies the document.
-	// params.contentChanges describe the content changes to the document.
-	connection.console.log(`${params.textDocument.uri} changed: ${JSON.stringify(params.contentChanges)}`);
-});
-connection.onDidCloseTextDocument((params) => {
-	// A text document got closed in VSCode.
-	// params.textDocument.uri uniquely identifies the document.
-	connection.console.log(`${params.textDocument.uri} closed.`);
-});
-*/
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events
