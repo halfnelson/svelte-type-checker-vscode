@@ -27,6 +27,9 @@ export class ConsumerDocumentMapper implements DocumentMapper {
     getOriginalPosition(generatedPosition: ts.LineAndCharacter): ts.LineAndCharacter | undefined {
         let mapped = this.consumer.originalPositionFor({ line: generatedPosition.line + 1, column: generatedPosition.character })
         if (!mapped) return;
+        if (mapped.line == 0) {
+            console.warn("Got 0 mapped line from", generatedPosition, "col was", mapped.column);
+        }
         return {
             line: mapped.line - 1,
             character: mapped.column

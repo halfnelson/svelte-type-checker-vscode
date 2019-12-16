@@ -15,9 +15,9 @@ import {
 	TextEdit,
 	MarkupContent
 } from 'vscode-languageserver';
-import { SourceMapConsumer } from 'source-map';
+
 import { serviceContainerForUri } from './LanguageService';
-import { URI } from 'vscode-uri';
+
 import * as ts from 'typescript';
 import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri, emptyRange, mapSpanToOriginalRange, getMapper, offsetToOriginalPosition } from './util';
 
@@ -114,10 +114,9 @@ async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Promise<
 		return emptyRange;
 	}
 
-	let mapper = await getMapper(uriToFilePath(diagnostic.file.fileName));
+	let mapper = await getMapper(filePathToUri(diagnostic.file.fileName));
 	return mapSpanToOriginalRange(mapper, diagnostic.file, diagnostic.start, diagnostic.length)
 }
-
 
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
@@ -178,10 +177,10 @@ connection.onCompletion(
 			}
 			
 
-			return {
+			let item =  {
 				label: c.name,
 				kind: ScriptElementKindToCompletionItemKind(c.kind),
-				sortText: c.sortText,
+				sortText: c.sortText + i,
 				insertText: c.insertText,
 				textEdit: textEdit,
 				data: {
@@ -191,6 +190,8 @@ connection.onCompletion(
 					source: c.source
 				}
 			} as CompletionItem
+			console.log("Returning item ",item.label, item.insertText, item.kind)
+			return item;
 		})
 	}		
 );

@@ -6,7 +6,7 @@ import { serviceContainerForUri } from './LanguageService';
 import { DocumentMapper } from './mapper';
 
 export function uriToFilePath(uri: string): string {
-    return URI.parse(uri).fsPath;
+    return  URI.parse(uri).fsPath.replace(/\\/g, "/");
 }
 
 export function filePathToUri(filePath: string): string {
@@ -21,6 +21,9 @@ export function ScriptElementKindToCompletionItemKind(kind: ts.ScriptElementKind
 			return CompletionItemKind.Keyword;
 		case ts.ScriptElementKind.variableElement:
 		case ts.ScriptElementKind.localVariableElement:
+		case ts.ScriptElementKind.letElement:
+		case ts.ScriptElementKind.constElement:
+		case ts.ScriptElementKind.alias:
 			return CompletionItemKind.Variable;
 		case ts.ScriptElementKind.memberVariableElement:
 		case ts.ScriptElementKind.memberGetAccessorElement:
@@ -45,7 +48,10 @@ export function ScriptElementKindToCompletionItemKind(kind: ts.ScriptElementKind
 			return CompletionItemKind.File;
 		case ts.ScriptElementKind.directory:
 			return CompletionItemKind.Folder;
+		case ts.ScriptElementKind.jsxAttribute:
+			return CompletionItemKind.Property
 		default:
+			console.log("Couldn't determine type for ", kind)
 			return CompletionItemKind.Text
 	}
 }
