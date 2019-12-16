@@ -2,6 +2,8 @@ import ts = require('typescript');
 import { CompletionItemKind, TextDocument, Range } from 'vscode-languageserver';
 import { SourceMapConsumer, RawSourceMap } from 'source-map';
 import { URI } from 'vscode-uri';
+import { serviceContainerForUri } from './LanguageService';
+import { DocumentMapper } from './mapper';
 
 export function uriToFilePath(uri: string): string {
     return URI.parse(uri).fsPath;
@@ -47,6 +49,45 @@ export function ScriptElementKindToCompletionItemKind(kind: ts.ScriptElementKind
 			return CompletionItemKind.Text
 	}
 }
+
+
+export const emptyRange:Range = { start: { line: 0, character: 0}, end: {line: 0, character: 0} };
+
+
+export async function getMapper(uri: string): Promise<DocumentMapper> {
+	let { getSnapshot } = serviceContainerForUri(uri);
+	let snap = getSnapshot(uri);
+	return await snap.getMapper();
+}
+
+
+export function lineAndCharacterToOriginalPosition(mapper: DocumentMapper, pos: ts.LineAndCharacter): ts.LineAndCharacter | undefined {
+	return mapper.getOriginalPosition(pos);
+}
+
+export function offsetToOriginalPosition(mapper: DocumentMapper, file: ts.SourceFile, offset: number): ts.LineAndCharacter | undefined {
+	return lineAndCharacterToOriginalPosition(mapper, file.getLineAndCharacterOfPosition(offset));
+}
+
+export function mapSpanToOriginalRange(mapper: DocumentMapper,  file: ts.SourceFile, start: number | undefined, length: number | undefined ): Range {
+	if (typeof start != "number") return emptyRange;
+
+	
+	let startPos = offsetToOriginalPosition(mapper, file, start);
+	if (!startPos) return emptyRange;
+
+	let endPos: ts.LineAndCharacter | undefined;
+	if (typeof length == "number") {
+		endPos =  offsetToOriginalPosition(mapper, file, start + length);
+	} 
+	endPos = endPos || {
+			line: startPos.line,
+			character: startPos.character,
+	}
+
+	return { start: startPos, end: endPos }
+}
+
 
 /*
 //source map decoders are cached since they are heavy

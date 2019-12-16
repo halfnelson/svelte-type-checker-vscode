@@ -12,13 +12,14 @@ import {
 	CompletionItem,
 	CompletionItemKind,
 	DidChangeWorkspaceFoldersNotification,
-	TextEdit
+	TextEdit,
+	MarkupContent
 } from 'vscode-languageserver';
 import { SourceMapConsumer } from 'source-map';
 import { serviceContainerForUri } from './LanguageService';
 import { URI } from 'vscode-uri';
 import * as ts from 'typescript';
-import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri } from './util';
+import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri, emptyRange, mapSpanToOriginalRange, getMapper, offsetToOriginalPosition } from './util';
 
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
@@ -82,13 +83,13 @@ async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
 	];
 	diagnostics.push(...lang.getSemanticDiagnostics(svelteTsxPath));
 
-	return diagnostics.map(diagnostic => ({
-		range: mapDiagnosticLocationToRange(diagnostic),
+	return Promise.all(diagnostics.map(async diagnostic => ({
+		range: await mapDiagnosticLocationToRange(diagnostic),
 		severity: mapSeverity(diagnostic.category),
 		source: 'svelte-type-checker',
 		message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
 		code: diagnostic.code,
-	} as Diagnostic));
+	} as Diagnostic)));
 }
 
 export function mapSeverity(category: ts.DiagnosticCategory): DiagnosticSeverity {
@@ -106,57 +107,15 @@ export function mapSeverity(category: ts.DiagnosticCategory): DiagnosticSeverity
     return DiagnosticSeverity.Error;
 }
 
-const emptyRange:Range = { start: { line: 0, character: 0}, end: {line: 0, character: 0} };
 
-
-async function lineAndCharacterToOriginalPosition(uri: string, pos: ts.LineAndCharacter): Promise<ts.LineAndCharacter | undefined> {
-	let { getSnapshot } = serviceContainerForUri(uri);
-	let snap = getSnapshot(uri);
-	let mapper = await snap.getMapper();
-	return mapper.getOriginalPosition(pos);
-}
-
-
-
-function offsetToOriginalPosition(file: ts.SourceFile, offset: number): Promise<ts.LineAndCharacter | undefined> {
-	let fileUri = filePathToUri(file.fileName);
-	let pos = file.getLineAndCharacterOfPosition(offset);
-	return lineAndCharacterToOriginalPosition(fileUri, pos);
-}
-
-
-
-
-
-async function mapSpanToOriginalRange(file: ts.SourceFile, start: number | undefined, length: number | undefined ): Promise<Range> {
-	if (typeof start != "number") return emptyRange;
-
-	
-	let startPos = await offsetToOriginalPosition(file, start);
-	if (!startPos) return emptyRange;
-
-	let endPos: ts.LineAndCharacter | undefined;
-	if (typeof length == "number") {
-		endPos =  await offsetToOriginalPosition(file, start + length);
-	} 
-	endPos = endPos || {
-			line: startPos.line,
-			character: startPos.character,
-	}
-
-	return { start: startPos, end: endPos }
-}
-
-
-
-async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Range {
+async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Promise<Range> {
 	if (!diagnostic.file) {
 		console.log("No diagnostic file, using emptyRange")
 		return emptyRange;
 	}
 
-	return mapSpanToOriginalRange(diagnostic.file, diagnostic.start, diagnostic.length)
-
+	let mapper = await getMapper(uriToFilePath(diagnostic.file.fileName));
+	return mapSpanToOriginalRange(mapper, diagnostic.file, diagnostic.start, diagnostic.length)
 }
 
 
@@ -164,54 +123,58 @@ async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Range {
 connection.onCompletion(
 		async (_textDocumentPosition: TextDocumentPositionParams): Promise<CompletionItem[]> => {
 		
-		let document = documents.get(_textDocumentPosition.textDocument.uri);
+		let document = documents.get(_textDocumentPosition.textDocument.uri)!;
 
 		if (!document) {
 			console.error("couldn't find document for completion", _textDocumentPosition.textDocument.uri);
 			return [];
 		};
 
-		const {languageService, getSourceMap, updateSvelteSnapshot: updateDocument } = getOrCreateLanguageServiceForDocument(document);
-//		let snapshot = updateDocument(document);
-		let decoder = await getSourceMapConsumer(document);
-
-		let svelteTsxPath = URI.parse(document.uri).fsPath + ".tsx";
+		let  { languageService } = serviceContainerForUri(document.uri);
+		let mapper = await getMapper(_textDocumentPosition.textDocument.uri);
 		let offset = document.offsetAt(_textDocumentPosition.position);
 
-		if (decoder) {
-			let program = languageService.getProgram();
-			if (!program) {
-				console.log("Couldn't get program for completion for ", document.uri);
-				return [];
-			}
-			let source = program.getSourceFile(svelteTsxPath)!
-			if (!source) {
-				console.log("Couldn't get source file for ", document.uri);
-				return [];
-			}
 
-			let pos = decoder.generatedPositionFor({column: _textDocumentPosition.position.character, line: _textDocumentPosition.position.line + 1, source: document.uri });
-			offset = source.getPositionOfLineAndCharacter(pos.line - 1, pos.column);
+		let languageServiceFileName = uriToFilePath(document.uri) + ".tsx";
+		let program = languageService.getProgram();
+		if (!program) {
+			console.log("Couldn't get program for completion for ", document.uri);
+			return [];
+		}
+		let source = program.getSourceFile(languageServiceFileName)!
+		if (!source) {
+			console.log("Couldn't get source file for ", document.uri+".tsx");
+			return [];
 		}
 
+		let pos = mapper.getGeneratedPosition(_textDocumentPosition.position);
+		if (!pos) {
+			console.log("couldn't determine generated position for", document.uri, pos);
+			return [];
+		}
+
+		offset = source.getPositionOfLineAndCharacter(pos.line, pos.character);
+	
+
 		//updateDocument(document);
-		let completions = languageService.getCompletionsAtPosition(svelteTsxPath, offset, {});
+		let completions = languageService.getCompletionsAtPosition(languageServiceFileName, offset, {});
 		if (!completions) {
-			console.log("Couldn't get completions from offset", offset, "for file", svelteTsxPath);
+			console.log("Couldn't get completions from offset", offset, "for file", languageServiceFileName);
 			return [];
 		}
 		
 		// The pass parameter contains the position of the text document in
 		// which code omplete got requested. For the example we ignore this
 		// info and always provide the same completion items.
-
-	
-		
 		
 		return completions.entries.map( (c, i) => {
 			let textEdit = undefined;
 			if (c.replacementSpan) {
-				textEdit = TextEdit.replace(Range.create(c.replacementSpan.start, c.replacementSpan.start + c.replacementSpan.length), c.insertText || c.name);
+				let start = offsetToOriginalPosition(mapper, source, c.replacementSpan.start);
+				let end = offsetToOriginalPosition(mapper, source, c.replacementSpan.start + c.replacementSpan.length);
+				if (start && end) {
+					textEdit = TextEdit.replace(Range.create(start, end), c.insertText || c.name);
+				}
 			}
 			
 
@@ -220,23 +183,49 @@ connection.onCompletion(
 				kind: ScriptElementKindToCompletionItemKind(c.kind),
 				sortText: c.sortText,
 				insertText: c.insertText,
-				textEdit: c.replacementSpan
-			
+				textEdit: textEdit,
+				data: {
+					// data used for resolving item details (see 'doResolve')
+					uri: document.uri,
+					offset,
+					source: c.source
+				}
 			} as CompletionItem
 		})
-		
+	}		
 );
 
 // This handler resolves additional information for the item selected in
 // the completion list.
 connection.onCompletionResolve(
 	(item: CompletionItem): CompletionItem => {
-		if (item.data === 1) {
-			item.detail = 'TypeScript details';
-			item.documentation = 'TypeScript documentation';
-		} else if (item.data === 2) {
-			item.detail = 'JavaScript details';
-			item.documentation = 'JavaScript documentation';
+		let { languageService } = serviceContainerForUri(item.data.uri);
+		let languageServiceFileName = uriToFilePath(item.data.uri) + ".tsx";
+		let details = languageService.getCompletionEntryDetails(languageServiceFileName, item.data.offset, item.label, undefined,  item.data.source, {
+			importModuleSpecifierEnding: 'minimal',
+			importModuleSpecifierPreference: 'relative',
+			includeCompletionsWithInsertText: true
+		})
+		if (details && item.kind !== CompletionItemKind.File && item.kind !== CompletionItemKind.Folder) {
+			item.detail = ts.displayPartsToString(details.displayParts);
+			const documentation: MarkupContent = {
+			  kind: 'markdown',
+			  value: ts.displayPartsToString(details.documentation)
+			};
+			/*
+			if (details.codeActions) {
+			  const textEdits = convertCodeAction(doc, details.codeActions, firstScriptRegion);
+			  item.additionalTextEdits = textEdits;
+	
+			  details.codeActions.forEach(action => {
+				if (action.description) {
+				  documentation.value += '\n' + action.description;
+				}
+			  });
+			}
+			*/
+			item.documentation = documentation;
+			delete item.data;
 		}
 		return item;
 	}
