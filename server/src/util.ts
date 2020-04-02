@@ -56,9 +56,7 @@ export function ScriptElementKindToCompletionItemKind(kind: ts.ScriptElementKind
 	}
 }
 
-
 export const emptyRange:Range = { start: { line: 0, character: 0}, end: {line: 0, character: 0} };
-
 
 export async function getMapper(uri: string): Promise<DocumentMapper> {
 	let { getSnapshot } = serviceContainerForUri(uri);
@@ -66,6 +64,31 @@ export async function getMapper(uri: string): Promise<DocumentMapper> {
 	return await snap.getMapper();
 }
 
+export function isSvelteTsx(fileNameOrUri: string): boolean {
+	return fileNameOrUri.endsWith('.svelte.tsx');
+}
+
+export function isSvelte(fileNameOrUri: string): boolean {
+	return fileNameOrUri.endsWith(".svelte");
+}
+
+export function originalNameFromSvelteTsx(fileNameOrUri: string) {
+	return fileNameOrUri.substring(0, fileNameOrUri.length -'.tsx'.length)
+}
+
+export function useSvelteTsxName(fileNameOrUri: string) {
+	if (isSvelte(fileNameOrUri)) {
+		return fileNameOrUri+".tsx";
+	}
+	return fileNameOrUri;
+}
+
+export function useSvelteOriginalName(fileNameOrUri: string) {
+	if (isSvelteTsx(fileNameOrUri)) {
+		return originalNameFromSvelteTsx(fileNameOrUri)
+	}
+	return fileNameOrUri;
+}
 
 export function lineAndCharacterToOriginalPosition(mapper: DocumentMapper, pos: ts.LineAndCharacter): ts.LineAndCharacter | undefined {
 	return mapper.getOriginalPosition(pos);

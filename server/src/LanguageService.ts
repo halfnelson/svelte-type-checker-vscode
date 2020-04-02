@@ -1,7 +1,7 @@
 import * as ts from 'typescript';
 import { DocumentSnapshot } from './DocumentSnapshot';
 import { dirname, resolve } from 'path';
-import { uriToFilePath, filePathToUri } from './util';
+import { uriToFilePath, filePathToUri, useSvelteTsxName, useSvelteOriginalName, isSvelteTsx, originalNameFromSvelteTsx } from './util';
 
 
 
@@ -147,18 +147,7 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
         return DocumentSnapshot.create(uri,  ts.sys.readFile(uriToFilePath(uri)) || '', 0);
     }
 
-    function isSvelteTsx(fileNameOrUri: string): boolean {
-        return fileNameOrUri.endsWith('.svelte.tsx');
-    }
-
-    function isSvelte(fileNameOrUri: string): boolean {
-        return fileNameOrUri.endsWith(".svelte");
-    }
-
-
-    function originalNameFromSvelteTsx(fileNameOrUri: string) {
-        return fileNameOrUri.substring(0, fileNameOrUri.length -'.tsx'.length)
-    }
+ 
 
     function fileExists(filename: string) {
         if (isSvelteTsx(filename)) {
@@ -174,17 +163,6 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
         return ts.sys.readFile(originalNameFromSvelteTsx(fileName));
     }
 
-    function useSvelteTsxName(fileNameOrUri: string) {
-        if (isSvelte(fileNameOrUri)) {
-            return fileNameOrUri+".tsx";
-        }
-        return fileNameOrUri;
-    }
 
-    function useSvelteOriginalName(fileNameOrUri: string) {
-        if (isSvelteTsx(fileNameOrUri)) {
-            return originalNameFromSvelteTsx(fileNameOrUri)
-        }
-        return fileNameOrUri;
-    }
+
 }

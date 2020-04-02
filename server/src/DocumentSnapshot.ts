@@ -2,7 +2,6 @@ import * as ts from 'typescript';
 import { RawSourceMap, SourceMapConsumer } from 'source-map';
 import svelte2tsx from 'svelte2tsx'
 import { DocumentMapper, IdentityMapper, ConsumerDocumentMapper } from './mapper'
-import { filePathToUri } from './util';
 
 export interface DocumentSnapshot extends ts.IScriptSnapshot {
     version: number;
