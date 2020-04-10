@@ -104,7 +104,7 @@ async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
 
 	var snap = getSnapshot(document.uri);
 	if (snap && snap.parseError) {
-		console.log("Parse error, suppressing diagnostics")
+		console.log("Parse error, suppressing diagnostics", snap.parseError)
 		return [];
 	}
 
@@ -144,7 +144,7 @@ export function mapSeverity(category: ts.DiagnosticCategory): DiagnosticSeverity
 
 async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Promise<Range> {
 	if (!diagnostic.file) {
-		console.log("No diagnostic file, using emptyRange")
+		console.log("No diagnostic file, using emptyRange", diagnostic)
 		return emptyRange;
 	}
 
