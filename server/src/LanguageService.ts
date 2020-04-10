@@ -1,20 +1,20 @@
 import * as ts from 'typescript';
 import { DocumentSnapshot } from './DocumentSnapshot';
 import { dirname, resolve } from 'path';
-import { RawSourceMap } from 'source-map';
-import { TextDocument } from 'vscode-languageserver';
-import { URI } from 'vscode-uri' 
+import { uriToFilePath, filePathToUri, useSvelteTsxName, useSvelteOriginalName, isSvelteTsx, originalNameFromSvelteTsx } from './util';
+
+
 
 export interface LanguageServiceContainer {
     languageService: ts.LanguageService;
-    updateDocument(document: TextDocument): void;
-    getSourceMap(document: TextDocument): RawSourceMap | undefined;
+    updateSnapshot(uri: string, content: string, version: number): DocumentSnapshot;
+    getSnapshot(uri: string): DocumentSnapshot;
 }
 
 const services = new Map<string, LanguageServiceContainer>();
 
-function serviceContainerForDocument(document: TextDocument): LanguageServiceContainer {
-    const searchDir = dirname(URI.parse(document.uri).fsPath);
+export function serviceContainerForUri(documentUri: string): LanguageServiceContainer {
+    const searchDir = dirname(uriToFilePath(documentUri));
     const tsconfigPath =
         ts.findConfigFile(searchDir, ts.sys.fileExists, 'tsconfig.json') ||
         ts.findConfigFile(searchDir, ts.sys.fileExists, 'jsconfig.json') ||
@@ -29,10 +29,6 @@ function serviceContainerForDocument(document: TextDocument): LanguageServiceCon
     }
 
     return service;
-}
-
-export function getOrCreateLanguageServiceForDocument(document: TextDocument): LanguageServiceContainer {
-    return serviceContainerForDocument(document) 
 }
 
 export function createLanguageService(tsconfigPath: string): LanguageServiceContainer {
@@ -82,19 +78,14 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
 
     const host: ts.LanguageServiceHost = {
         getCompilationSettings: () => compilerOptions,
-        getScriptFileNames: () => Array.from(new Set([...files, ...Array.from(documents.keys()), ...svelteTsxFiles].map(useSvelteTsxName))),
+        getScriptFileNames: () => Array.from(new Set([...files, ...Array.from(documents.keys()).map(k => uriToFilePath(k) || k) , ...svelteTsxFiles].map(useSvelteTsxName))),
         getScriptVersion(fileName: string) {
-            const doc = getSvelteSnapshot(fileName);
-            return doc ? String(doc.version) : '0';
+            const doc = getSnapshot(filePathToUri(fileName));
+            return String(doc.version)
         },
         getScriptSnapshot(fileName: string): ts.IScriptSnapshot | undefined {
            // console.log("get script snapshot", fileName);
-            const doc = getSvelteSnapshot(fileName);
-            if (doc) {
-                return doc;
-            }
-
-            return ts.ScriptSnapshot.fromString(this.readFile!(fileName) || '');
+            return getSnapshot(filePathToUri(fileName));
         },
         getCurrentDirectory: () => workspacePath,
         getDefaultLibFileName: ts.getDefaultLibFilePath,
@@ -126,49 +117,37 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
 
     return {
         languageService,
-        updateDocument,
-        getSourceMap
+        updateSnapshot,
+        getSnapshot,
     };
 
-    function updateDocument(document: TextDocument) {
+    function updateSnapshot(uri: string, content: string, version: number) {
       //  console.log("update document", document.getFilePath());
-        const newSnapshot = DocumentSnapshot.fromDocument(document);
-        documents.set(useSvelteTsxName(URI.parse(document.uri).fsPath), newSnapshot);
+        let snap = getSnapshot(uri);
+        if (snap && snap.version == version) return snap;
+
+        const newSnapshot = DocumentSnapshot.create(uri, content, version);
+        documents.set(uri, newSnapshot);
+        return newSnapshot;
     }
 
-    function getSourceMap(document: TextDocument): RawSourceMap | undefined {
-        let snap = getSvelteSnapshot(URI.parse(document.uri).fsPath+".tsx");
-        if (!snap) return;
-        return snap.map;
-    }
-
-    function getSvelteSnapshot(fileName: string): DocumentSnapshot | undefined {
-        const doc = documents.get(fileName);
+    function getSnapshot(uri: string): DocumentSnapshot {
+        const originalName = useSvelteOriginalName(uri);
+        const doc = documents.get(originalName);
         if (doc) {
             return doc;
         }
 
-        if (isSvelteTsx(fileName)) {
-            const originalName = originalNameFromSvelteTsx(fileName);
-            const doc = DocumentSnapshot.fromDocument(
-                TextDocument.create(URI.file(originalName).toString(), '', 0, ts.sys.readFile(originalName) || ''))
-            documents.set(fileName, doc);
+        if (isSvelteTsx(uri)) {
+            const doc = DocumentSnapshot.create(originalName, readFile(uriToFilePath(originalName)) || '', 0)
+            documents.set(originalName, doc);
             return doc;
         }
+
+        return DocumentSnapshot.create(uri,  ts.sys.readFile(uriToFilePath(uri)) || '', 0);
     }
 
-    function isSvelteTsx(fileName: string): boolean {
-        return fileName.endsWith('.svelte.tsx');
-    }
-
-    function isSvelte(fileName: string): boolean {
-        return fileName.endsWith(".svelte");
-    }
-
-
-    function originalNameFromSvelteTsx(filename: string) {
-        return filename.substring(0, filename.length -'.tsx'.length)
-    }
+ 
 
     function fileExists(filename: string) {
         if (isSvelteTsx(filename)) {
@@ -178,17 +157,12 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
     }
 
     function readFile(fileName: string) {
-    //    console.log("Reading file from module resolve");
-        if (!isSvelteTsx) {
+        if (!isSvelteTsx(fileName)) {
             return ts.sys.readFile(fileName)
         } 
         return ts.sys.readFile(originalNameFromSvelteTsx(fileName));
     }
 
-    function useSvelteTsxName(filename: string) {
-        if (isSvelte(filename)) {
-            return filename+".tsx";
-        }
-        return filename;
-    }
+
+
 }

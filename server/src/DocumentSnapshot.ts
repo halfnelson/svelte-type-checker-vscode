@@ -1,37 +1,60 @@
 import * as ts from 'typescript';
-import { RawSourceMap } from 'source-map';
+import { RawSourceMap, SourceMapConsumer } from 'source-map';
 import svelte2tsx from 'svelte2tsx'
-import { TextDocument } from 'vscode-languageserver';
+import { DocumentMapper, IdentityMapper, ConsumerDocumentMapper } from './mapper'
 
 export interface DocumentSnapshot extends ts.IScriptSnapshot {
     version: number;
     scriptKind: ts.ScriptKind;
     map: RawSourceMap | undefined;
+    getMapper(): Promise<DocumentMapper>;
+}
+
+
+function scriptKindFromExtension(filenameOrUri: string) {
+    if (filenameOrUri.endsWith(".tsx")) return ts.ScriptKind.TSX;
+    if (filenameOrUri.endsWith(".ts")) return ts.ScriptKind.TS;
+    if (filenameOrUri.endsWith(".js")) return ts.ScriptKind.JS;
+    if (filenameOrUri.endsWith(".json")) return ts.ScriptKind.JSON;
+    if (filenameOrUri.endsWith(".jsx")) return ts.ScriptKind.JSX;
+    return ts.ScriptKind.Unknown;
 }
 
 export namespace DocumentSnapshot {
-    export function fromDocument(document: TextDocument): DocumentSnapshot {
-        const text = document.getText();
-        let tsxSource = '';
-        let tsxMap = undefined;
-        try {
-            let tsx = svelte2tsx(text);
-            tsxSource = tsx.code;
-            tsxMap = tsx.map;
-        } catch (e) {
-            console.error(`Couldn't convert ${document.uri} to tsx`, e);
+    export function create(uri: string, text: string, version: number): DocumentSnapshot {
+        let tsxSource = text;
+        let tsxMap:RawSourceMap | undefined = undefined;
+        let scriptKind = scriptKindFromExtension(uri);
+        if (uri.endsWith('.svelte')) {
+            try {
+                let tsx = svelte2tsx(text);
+                tsxSource = tsx.code;
+                tsxMap = tsx.map;
+                scriptKind = ts.ScriptKind.TSX;
+                if (tsxMap) {
+                    tsxMap.sources = [uri]
+                }
+            } catch (e) {
+                console.error(`Couldn't convert ${uri} to tsx`, e);
+            }
+            console.info(`converted ${uri} to tsx`);
         }
-        console.info(`converted ${document.uri} to tsx`);
               
         const length = tsxSource.length;
 
+        let mapper: Promise<DocumentMapper> | null = null;
+
         return {
             map: tsxMap,
-            version: document.version,
-            scriptKind: ts.ScriptKind.TSX, //  getScriptKindFromAttributes(document.getAttributes()),
+            version: version,
+            scriptKind: scriptKind, 
             getText: (start, end) => tsxSource.substring(start, end),
             getLength: () => length,
             getChangeRange: () => undefined,
+            getMapper: () => {
+                if (!tsxMap) return Promise.resolve(new IdentityMapper());
+                return mapper || (mapper = Promise.resolve(new ConsumerDocumentMapper(new SourceMapConsumer(tsxMap), uri)))
+            }
         };
     }
 }

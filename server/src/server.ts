@@ -6,12 +6,25 @@ import {
 	TextDocument,
 	Diagnostic,
 	Range,
-	DiagnosticSeverity
+	DiagnosticSeverity,
+	TextDocumentPositionParams,
+	CompletionItem,
+	CompletionItemKind,
+	DidChangeWorkspaceFoldersNotification,
+	TextEdit,
+	MarkupContent,
+	CodeActionKind,
+	Hover,
+	DefinitionLink,
+	Location
 } from 'vscode-languageserver';
-import { SourceMapConsumer } from 'source-map';
-import { getOrCreateLanguageServiceForDocument } from './LanguageService';
-import { URI } from 'vscode-uri';
+
+import { serviceContainerForUri } from './LanguageService';
+
 import * as ts from 'typescript';
+import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri, emptyRange, mapSpanToOriginalRange, getMapper, offsetToOriginalPosition, useSvelteOriginalName } from './util';
+import { DocumentContext } from './DocumentContext';
+
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -19,13 +32,7 @@ let connection = createConnection(ProposedFeatures.all);
 
 // Create a simple text document manager. The text document manager
 // supports full document sync only
-let documents: TextDocuments = new TextDocuments();
-
-//source map decoders for each text document
-let consumers = new Map<TextDocument, { version: number, consumer: SourceMapConsumer }>();
-
-
-
+export let documents: TextDocuments = new TextDocuments();
 let hasDiagnosticRelatedInformationCapability: boolean = false;
 
 connection.onInitialize((params: InitializeParams) => {
@@ -41,9 +48,11 @@ connection.onInitialize((params: InitializeParams) => {
 		capabilities: {
 			textDocumentSync: documents.syncKind,
 			// Tell the client that the server supports code completion
-			/*	completionProvider: {
-					resolveProvider: true
-				} */
+			completionProvider: {
+				resolveProvider: true
+			},
+			hoverProvider: true,
+			definitionProvider: true
 		}
 	};
 });
@@ -55,8 +64,8 @@ connection.onInitialized(() => {
 // The content of a document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent(async change => {
-	const { updateDocument } = getOrCreateLanguageServiceForDocument(change.document);
-	updateDocument(change.document);
+	const { updateSnapshot } = serviceContainerForUri(change.document.uri);
+	updateSnapshot(change.document.uri, change.document.getText(), change.document.version);
 
 	let diagnostics = await getDiagnostics(change.document);
 	connection.sendDiagnostics({ uri: change.document.uri, diagnostics });
@@ -64,12 +73,11 @@ documents.onDidChangeContent(async change => {
 
 
 
-
 async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
 
-	const { languageService: lang, getSourceMap } = getOrCreateLanguageServiceForDocument(document);
+	const { languageService: lang } = serviceContainerForUri(document.uri);
 
-	const documentPath = URI.parse(document.uri).fsPath;
+	const documentPath = uriToFilePath(document.uri);
 	const svelteTsxPath = documentPath + ".tsx";
 
 	let diagnostics: ts.Diagnostic[] = [
@@ -78,153 +86,176 @@ async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
 	];
 	diagnostics.push(...lang.getSemanticDiagnostics(svelteTsxPath));
 
-	let sourceMap = getSourceMap(document);
-
-	let decoder: { version: number, consumer: SourceMapConsumer } | undefined = undefined;
-	if (sourceMap) {
-		decoder = consumers.get(document);
-		if (!decoder || decoder.version != document.version) {
-			decoder = { version: document.version, consumer: await new SourceMapConsumer(sourceMap) };
-			consumers.set(document, decoder);
-		}
-	} else {
-		console.log("Couldn't get sourcemap for document", documentPath);
-	}
-
-	return diagnostics.map(diagnostic => ({
-		range: mapDiagnosticLocationToRange(diagnostic, document, decoder && decoder.consumer),
+	return Promise.all(diagnostics.map(async diagnostic => ({
+		range: await mapDiagnosticLocationToRange(diagnostic),
 		severity: mapSeverity(diagnostic.category),
 		source: 'svelte-type-checker',
 		message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
 		code: diagnostic.code,
-	} as Diagnostic));
+	} as Diagnostic)));
 }
 
 export function mapSeverity(category: ts.DiagnosticCategory): DiagnosticSeverity {
-    switch (category) {
-        case ts.DiagnosticCategory.Error:
-            return DiagnosticSeverity.Error;
-        case ts.DiagnosticCategory.Warning:
-            return DiagnosticSeverity.Warning;
-        case ts.DiagnosticCategory.Suggestion:
-            return DiagnosticSeverity.Hint;
-        case ts.DiagnosticCategory.Message:
-            return DiagnosticSeverity.Information;
-    }
+	switch (category) {
+		case ts.DiagnosticCategory.Error:
+			return DiagnosticSeverity.Error;
+		case ts.DiagnosticCategory.Warning:
+			return DiagnosticSeverity.Warning;
+		case ts.DiagnosticCategory.Suggestion:
+			return DiagnosticSeverity.Hint;
+		case ts.DiagnosticCategory.Message:
+			return DiagnosticSeverity.Information;
+	}
 
-    return DiagnosticSeverity.Error;
+	return DiagnosticSeverity.Error;
 }
 
-const emptyRange:Range = { start: { line: 0, character: 0}, end: {line: 0, character: 0} };
 
-function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic, document: TextDocument, sourceMap?: SourceMapConsumer): Range {
+async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Promise<Range> {
 	if (!diagnostic.file) {
-		console.log("No diagnostic file, using convertRange")
+		console.log("No diagnostic file, using emptyRange")
 		return emptyRange;
 	}
 
-	if (typeof diagnostic.start != "number") return emptyRange;
-
-	let start = ts.getLineAndCharacterOfPosition(diagnostic.file, diagnostic.start);
-
-	start.character = start.character;
-	start.line = start.line;
-
-	let end;
-	if (typeof diagnostic.length == "number") {
-		end = ts.getLineAndCharacterOfPosition(diagnostic.file, diagnostic.start + diagnostic.length);
-		end.character = end.character;
-		end.line = end.line;
-	} else {
-		end = {
-			line: start.line,
-			character: start.character,
-		} as ts.LineAndCharacter
-	}
-
-
-	if (sourceMap) {
-		for (let pos of [start, end]) {
-			let res = sourceMap.originalPositionFor({ line: pos.line + 1, column: pos.character + 1 })
-			if (res != null) {
-				pos.line = (res.line || 1) - 1;
-				pos.character = (res.column || 1) - 1;
-			}
-		}
-	}
-	return { start, end }
+	let mapper = await getMapper(filePathToUri(diagnostic.file.fileName));
+	return mapSpanToOriginalRange(mapper, diagnostic.file, diagnostic.start, diagnostic.length)
 }
 
 
+connection.onHover(async (evt) => {
+	let { textDocument, position } = evt;
 
+	let docContext = await DocumentContext.createFromUri(textDocument.uri);
+	if (!docContext) {
+		return null;
+	};
 
-/*
-async function validateSvelteDocument(svelteDocument: TextDocument): Promise<void> {
-	// In this simple example we get the settings for every validate run.
-	let settings = await getDocumentSettings(svelteDocument.uri);
-
-	// The validator creates diagnostics for all uppercase words length 2 and more
-	let text = svelteDocument.getText();
-	let pattern = /\b[A-Z]{2,}\b/g;
-	let m: RegExpExecArray | null;
-
-	let problems = 0;
-	let diagnostics: Diagnostic[] = [];
-	while ((m = pattern.exec(text))) {
-		problems++;
-		let diagnostic: Diagnostic = {
-			severity: DiagnosticSeverity.Warning,
-			range: {
-				start: svelteDocument.positionAt(m.index),
-				end: svelteDocument.positionAt(m.index + m[0].length)
-			},
-			message: `${m[0]} is all uppercase.`,
-			source: 'ex'
-		};
-		if (hasDiagnosticRelatedInformationCapability) {
-			diagnostic.relatedInformation = [
-				{
-					location: {
-						uri: svelteDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Spelling matters'
-				},
-				{
-					location: {
-						uri: svelteDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Particularly for names'
-				}
-			];
-		}
-		diagnostics.push(diagnostic);
+	let offset = docContext.generatedOffsetFromOriginalPosition(position);
+	if (offset === undefined) {
+		console.log("couldn't determine generated position for", textDocument.uri, position);
+		return null;
 	}
 
-	// Send the computed diagnostics to VSCode.
-	connection.sendDiagnostics({ uri: svelteDocument.uri, diagnostics });
-}
+	var info = docContext.languageService.getQuickInfoAtPosition(docContext.generatedFilePath, offset);
+
+	if (!info) {
+		return null;
+	}
+
+	let contents = ts.displayPartsToString(info.displayParts);
+	let h: Hover = {
+		range: docContext.originalRangeFromGeneratedSpan(info.textSpan),
+		contents: {
+			language: "ts",
+			value: contents
+		}
+	}
+
+	return h;
+})
+
+connection.onDefinition(async (evt) => {
+	let { position, textDocument } = evt;
+
+	let docContext = await DocumentContext.createFromUri(textDocument.uri);
+	if (docContext === undefined) {
+		console.log("Couldn't find document context for ", textDocument.uri);
+		return null;
+	}
+
+	let offset = docContext.generatedOffsetFromOriginalPosition(position);
+	if (offset === undefined) {
+		console.log("Couldn't find offset for document and position", textDocument, position);
+		return null;
+	}
+
+	const defs = docContext.languageService.getDefinitionAndBoundSpan(docContext.generatedFilePath, offset);
+	if (!defs || !defs.definitions) {
+		return null;
+	}
+
+	let defProms:Promise<Location | null>[] = defs.definitions
+	.map(async def => {
+		console.log("definition in ", def.fileName)
+		var docContext = await DocumentContext.createFromUri(useSvelteOriginalName(filePathToUri(def.fileName)));
+		if (!docContext) return null;
+		let range = docContext.originalRangeFromGeneratedSpan(def.textSpan);
+		
+		//trying to find the definition of svelte component looks for the class definition which doesn't exist in the original, we map to 0,1
+		if (range.start.line < 0) {
+			range.start.line = 0;
+			range.start.character = 1;
+		}
+
+		if (range.end.line < 0) {
+			range.end = range.start;
+		}
+
+		return Location.create(
+			docContext.uri, 
+			range
+		);
+	});
+
+	let defResults = await Promise.all(defProms);
+	return defResults.filter(x => x != null) as Location[];
+})
 
 
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
-	(_textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
+	async (_textDocumentPosition: TextDocumentPositionParams): Promise<CompletionItem[]> => {
+
+		let docContext = await DocumentContext.createFromUri(_textDocumentPosition.textDocument.uri);
+
+		if (docContext === undefined) {
+			console.error("couldn't find document for completion", _textDocumentPosition.textDocument.uri);
+			return [];
+		};
+
+
+		let offset = docContext.generatedOffsetFromOriginalPosition(_textDocumentPosition.position);
+		if (offset === undefined) {
+			console.error("Couldn't determine offset from position", _textDocumentPosition);
+			return [];
+		}
+
+		let completions = docContext.languageService.getCompletionsAtPosition(docContext.generatedFilePath, offset, {
+			includeCompletionsWithInsertText: true,
+			includeCompletionsForModuleExports: true
+		});
+
+		if (!completions) {
+			console.log("Couldn't get completions from offset", offset, "for file", docContext.generatedFilePath);
+			return [];
+		}
+
 		// The pass parameter contains the position of the text document in
-		// which code complete got requested. For the example we ignore this
+		// which code omplete got requested. For the example we ignore this
 		// info and always provide the same completion items.
-		return [
-			{
-				label: 'TypeScript',
-				kind: CompletionItemKind.Text,
-				data: 1
-			},
-			{
-				label: 'JavaScript',
-				kind: CompletionItemKind.Text,
-				data: 2
+
+		return completions.entries.map((c, i) => {
+			let textEdit = undefined;
+			if (c.replacementSpan) {
+				textEdit = TextEdit.replace(docContext!.originalRangeFromGeneratedSpan(c.replacementSpan), c.insertText || c.name);
 			}
-		];
+
+			let item = {
+				label: c.name,
+				kind: ScriptElementKindToCompletionItemKind(c.kind),
+				sortText: c.sortText + i,
+				insertText: c.insertText,
+				textEdit: textEdit,
+				data: {
+					// data used for resolving item details (see 'doResolve')
+					uri: docContext!.uri,
+					offset,
+					source: c.source
+				}
+			} as CompletionItem
+			console.log("Returning item ", item.label, item.insertText, item.kind)
+			return item;
+		})
 	}
 );
 
@@ -232,36 +263,40 @@ connection.onCompletion(
 // the completion list.
 connection.onCompletionResolve(
 	(item: CompletionItem): CompletionItem => {
-		if (item.data === 1) {
-			item.detail = 'TypeScript details';
-			item.documentation = 'TypeScript documentation';
-		} else if (item.data === 2) {
-			item.detail = 'JavaScript details';
-			item.documentation = 'JavaScript documentation';
+		let { languageService } = serviceContainerForUri(item.data.uri);
+		let languageServiceFileName = uriToFilePath(item.data.uri) + ".tsx";
+		let details = languageService.getCompletionEntryDetails(languageServiceFileName, item.data.offset, item.label,
+			{} as ts.FormatCodeSettings,
+			item.data.source, {
+			importModuleSpecifierEnding: 'minimal',
+			importModuleSpecifierPreference: 'relative',
+			includeCompletionsWithInsertText: true
+		})
+		if (details && item.kind !== CompletionItemKind.File && item.kind !== CompletionItemKind.Folder) {
+			item.detail = ts.displayPartsToString(details.displayParts);
+			const documentation: MarkupContent = {
+				kind: 'markdown',
+				value: ts.displayPartsToString(details.documentation)
+			};
+			
+			/*
+			if (details.codeActions) {
+			  const textEdits = convertCodeAction(doc, details.codeActions, firstScriptRegion);
+			  item.additionalTextEdits = textEdits;
+	
+			  details.codeActions.forEach(action => {
+				if (action.description) {
+				  documentation.value += '\n' + action.description;
+				}
+			  });
+			}
+			*/
+			item.documentation = documentation;
+			delete item.data;
 		}
 		return item;
 	}
 );
-*/
-/*
-connection.onDidOpenTextDocument((params) => {
-	// A text document got opened in VSCode.
-	// params.textDocument.uri uniquely identifies the document. For documents store on disk this is a file URI.
-	// params.textDocument.text the initial full content of the document.
-	connection.console.log(`${params.textDocument.uri} opened.`);
-});
-connection.onDidChangeTextDocument((params) => {
-	// The content of a text document did change in VSCode.
-	// params.textDocument.uri uniquely identifies the document.
-	// params.contentChanges describe the content changes to the document.
-	connection.console.log(`${params.textDocument.uri} changed: ${JSON.stringify(params.contentChanges)}`);
-});
-connection.onDidCloseTextDocument((params) => {
-	// A text document got closed in VSCode.
-	// params.textDocument.uri uniquely identifies the document.
-	connection.console.log(`${params.textDocument.uri} closed.`);
-});
-*/
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events
