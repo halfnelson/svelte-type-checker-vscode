@@ -3,13 +3,24 @@ import { RawSourceMap, SourceMapConsumer } from 'source-map';
 import svelte2tsx from 'svelte2tsx'
 import { DocumentMapper, IdentityMapper, ConsumerDocumentMapper } from './mapper'
 
+interface Location {
+    line: number; 
+    column: number;
+}
+
+export interface ParseError {
+    message: string,
+    start: Location,
+    end?: Location
+}
+
 export interface DocumentSnapshot extends ts.IScriptSnapshot {
     version: number;
+    parseError?: ParseError; 
     scriptKind: ts.ScriptKind;
     map: RawSourceMap | undefined;
     getMapper(): Promise<DocumentMapper>;
 }
-
 
 function scriptKindFromExtension(filenameOrUri: string) {
     if (filenameOrUri.endsWith(".tsx")) return ts.ScriptKind.TSX;
@@ -25,6 +36,7 @@ export namespace DocumentSnapshot {
         let tsxSource = text;
         let tsxMap:RawSourceMap | undefined = undefined;
         let scriptKind = scriptKindFromExtension(uri);
+        var parseError = undefined;
         if (uri.endsWith('.svelte')) {
             try {
                 let tsx = svelte2tsx(text);
@@ -35,6 +47,12 @@ export namespace DocumentSnapshot {
                     tsxMap.sources = [uri]
                 }
             } catch (e) {
+                parseError = {
+                    message: e.message,
+                    start: e.start,
+                    end: e.end
+                }
+                tsxSource = "";
                 console.error(`Couldn't convert ${uri} to tsx`, e);
             }
             console.info(`converted ${uri} to tsx`);
@@ -45,6 +63,7 @@ export namespace DocumentSnapshot {
         let mapper: Promise<DocumentMapper> | null = null;
 
         return {
+            parseError: parseError,
             map: tsxMap,
             version: version,
             scriptKind: scriptKind, 
