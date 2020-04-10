@@ -15,4 +15,25 @@ For best results, disable the typescript complete, hover, and definition feature
 * Hover information for template attributes
 
 
+### Examples
 
+#### Property Type Checking
+![Property Type Checking](https://raw.githubusercontent.com/halfnelson/svelte-type-checker-vscode/master/samples/prop-type-check.png)
+
+#### Property Auto Complete
+![Property Completion](https://raw.githubusercontent.com/halfnelson/svelte-type-checker-vscode/master/samples/prop-complete.png)
+
+#### Slot Parameter Checking
+![Slot Param Check](https://raw.githubusercontent.com/halfnelson/svelte-type-checker-vscode/master/samples/slot-param-type-check.png)
+
+#### Slot Parameter Info
+![Slot Param Info](https://raw.githubusercontent.com/halfnelson/svelte-type-checker-vscode/master/samples/slot-param-info.png)
+
+#### Await Type Checking/Info
+![Await Types](https://raw.githubusercontent.com/halfnelson/svelte-type-checker-vscode/master/samples/await-types.png)
+
+#### Store Type Checking/Info
+![Store Types](https://raw.githubusercontent.com/halfnelson/svelte-type-checker-vscode/master/samples/store-types.png)
+
+#### Animation Parameter Checking/Info
+![Transition Types](https://raw.githubusercontent.com/halfnelson/svelte-type-checker-vscode/master/samples/transition-parameter-types.png)
