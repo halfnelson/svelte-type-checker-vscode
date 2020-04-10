@@ -5,7 +5,7 @@
 	"author": "David Pershouse",
 	"publisher": "halfnelson",
 	"license": "MIT",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"icon": "icons/logo.png",
 	"galleryBanner": {
 		"color": "#FF3E00",
@@ -35,7 +35,7 @@
 			"type": "object",
 			"title": "Svelte Type Checker",
 			"properties": {
-				"svelte-type-checker.enableHoverHints":  {
+				"svelte-type-checker.enableHoverHints": {
 					"type": "boolean",
 					"default": false,
 					"description": "Show hints from the typescript service on hover"
