@@ -1,9 +1,16 @@
 {
 	"name": "svelte-type-checker-vscode",
-	"description": "Check types on your svelte templates",
+	"displayName": "Svelte Type Checker",
+	"description": "Check types in your Svelte 3 projects",
 	"author": "David Pershouse",
+	"publisher": "halfnelson",
 	"license": "MIT",
 	"version": "0.1.0",
+	"icon": "icons/logo.png",
+	"galleryBanner": {
+		"color": "#FF3E00",
+		"theme": "dark"
+	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/halfnelson/svelte-type-checker-vscode"
@@ -12,6 +19,9 @@
 		"svelte",
 		"typescript",
 		"vscode"
+	],
+	"categories": [
+		"Programming Languages"
 	],
 	"engines": {
 		"vscode": "^1.33.0"
@@ -24,7 +34,23 @@
 		"configuration": {
 			"type": "object",
 			"title": "Svelte Type Checker",
-			"properties": {}
+			"properties": {
+				"svelte-type-checker.enableHoverHints":  {
+					"type": "boolean",
+					"default": false,
+					"description": "Show hints from the typescript service on hover"
+				},
+				"svelte-type-checker.enableDefinitions": {
+					"type": "boolean",
+					"default": false,
+					"description": "Enable go to definition"
+				},
+				"svelte-type-checker.enableCompletion": {
+					"type": "boolean",
+					"default": false,
+					"description": "Provide completion suggestions for script and component props"
+				}
+			}
 		}
 	},
 	"scripts": {

@@ -26,14 +26,39 @@ import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri, em
 import { DocumentContext } from './DocumentContext';
 
 
+// The settings interface describe the server relevant settings part
+interface Settings {
+    "svelte-type-checker": TypeCheckerSettings;
+}
+
+// These are the example settings we defined in the client's package.json
+// file
+interface TypeCheckerSettings {
+	enableHoverHints: boolean,
+	enableDefinitions: boolean,
+	enableCompletion: boolean
+}
+
+
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
+
+var settings: TypeCheckerSettings = {
+	enableHoverHints: false,
+	enableDefinitions: false,
+	enableCompletion: false
+} 
 
 // Create a simple text document manager. The text document manager
 // supports full document sync only
 export let documents: TextDocuments = new TextDocuments();
 let hasDiagnosticRelatedInformationCapability: boolean = false;
+
+connection.onDidChangeConfiguration((change) => { 
+	settings = { ...settings, ...change.settings['svelte-type-checker'] }
+	console.log("got new settings", settings);
+})
 
 connection.onInitialize((params: InitializeParams) => {
 	let capabilities = params.capabilities;
@@ -129,6 +154,9 @@ async function mapDiagnosticLocationToRange(diagnostic: ts.Diagnostic): Promise<
 
 
 connection.onHover(async (evt) => {
+
+	if (!settings.enableHoverHints) return null;
+
 	let { textDocument, position } = evt;
 
 	let docContext = await DocumentContext.createFromUri(textDocument.uri);
@@ -161,6 +189,9 @@ connection.onHover(async (evt) => {
 })
 
 connection.onDefinition(async (evt) => {
+
+	if (!settings.enableDefinitions) return null;
+
 	let { position, textDocument } = evt;
 
 	let docContext = await DocumentContext.createFromUri(textDocument.uri);
@@ -216,6 +247,8 @@ connection.onDefinition(async (evt) => {
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
 	async (_textDocumentPosition: TextDocumentPositionParams): Promise<CompletionItem[]> => {
+
+		if (!settings.enableCompletion) return [];
 
 		let docContext = await DocumentContext.createFromUri(_textDocumentPosition.textDocument.uri);
 
