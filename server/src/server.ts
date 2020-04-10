@@ -22,7 +22,7 @@ import {
 import { serviceContainerForUri } from './LanguageService';
 
 import * as ts from 'typescript';
-import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri, emptyRange, mapSpanToOriginalRange, getMapper, offsetToOriginalPosition, useSvelteOriginalName } from './util';
+import { ScriptElementKindToCompletionItemKind, uriToFilePath, filePathToUri, emptyRange, mapSpanToOriginalRange, getMapper, offsetToOriginalPosition, useSvelteOriginalName, useSvelteTsxName } from './util';
 import { DocumentContext } from './DocumentContext';
 
 
@@ -75,7 +75,13 @@ documents.onDidChangeContent(async change => {
 
 async function getDiagnostics(document: TextDocument): Promise<Diagnostic[]> {
 
-	const { languageService: lang } = serviceContainerForUri(document.uri);
+	const { languageService: lang, getSnapshot } = serviceContainerForUri(document.uri);
+
+	var snap = getSnapshot(document.uri);
+	if (snap && snap.parseError) {
+		console.log("Parse error, suppressing diagnostics")
+		return [];
+	}
 
 	const documentPath = uriToFilePath(document.uri);
 	const svelteTsxPath = documentPath + ".tsx";
@@ -126,7 +132,7 @@ connection.onHover(async (evt) => {
 	let { textDocument, position } = evt;
 
 	let docContext = await DocumentContext.createFromUri(textDocument.uri);
-	if (!docContext) {
+	if (!docContext || docContext.snapshot.parseError) {
 		return null;
 	};
 
@@ -160,6 +166,11 @@ connection.onDefinition(async (evt) => {
 	let docContext = await DocumentContext.createFromUri(textDocument.uri);
 	if (docContext === undefined) {
 		console.log("Couldn't find document context for ", textDocument.uri);
+		return null;
+	}
+
+	if (docContext.snapshot.parseError) {
+		console.log("Skipping definition lookup due to parse error")
 		return null;
 	}
 
@@ -212,6 +223,11 @@ connection.onCompletion(
 			console.error("couldn't find document for completion", _textDocumentPosition.textDocument.uri);
 			return [];
 		};
+
+		if (docContext.snapshot.parseError) {
+			console.log("skipping completion due to parse error");
+			return [];
+		}
 
 
 		let offset = docContext.generatedOffsetFromOriginalPosition(_textDocumentPosition.position);
