@@ -38,16 +38,16 @@ type ActionItemAttributes = {
 };
 
 type ActivityIndicatorAttributes = {
-    busy: boolean
+    busy: boolean | string
 };
 
 type BorderAttributes = {
-    cornerradius: number
+    cornerradius: number | string
 };
 
 type ButtonAttributes = {
     text: string
-    textwrap: boolean
+    textwrap: boolean | string
     formattedtext: string
 };
 
@@ -58,8 +58,8 @@ type BindableAttributes = {
 };
 
 type ViewAttributes = {
-    borderradius: number
-    borderwidth: number
+    borderradius: number | string
+    borderwidth: number | string
     bordercolor: string
     automationtext: string
     loaded: string
@@ -67,39 +67,39 @@ type ViewAttributes = {
     color: string
     backgroundcolor: string
     backgroundimage: string
-    minwidth: number
-    minheight: number
-    width: number
-    height: number
+    minwidth: number | string
+    minheight: number | string
+    width: number | string
+    height: number | string
     margin: string
-    marginleft: number
-    margintop: number
-    marginright: number
-    marginbottom: number
+    marginleft: number | string
+    margintop: number | string
+    marginright: number | string
+    marginbottom: number | string
     horizontalalignment: string
     verticalalignment: string
     visibility: string
-    opacity: number
-    translatex: number
-    translatey: number
-    scalex: number
-    scaley: number
-    originx: number
-    originy: number
-    rotate: number
-    isenabled: boolean
-    isuserinteractionenabled: boolean
+    opacity: number | string
+    translatex: number | string
+    translatey: number | string
+    scalex: number | string
+    scaley: number | string
+    originx: number | string
+    originy: number | string
+    rotate: number | string
+    isenabled: boolean | string
+    isuserinteractionenabled: boolean | string
     id: string
     cssclass: string
     classname: string
     style: string
     csstype: string
-    row: number
-    col: number
-    rowspan: number
-    colspan: number
-    left: number
-    top: number
+    row: number | string
+    col: number | string
+    rowspan: number | string
+    colspan: number | string
+    left: number | string
+    top: number | string
     dock: string
     class: string
     tap: string
@@ -122,9 +122,9 @@ type CustomLayoutViewAttributes = {
 };
 
 type DatePickerAttributes = {
-    year: number
-    month: number
-    day: number
+    year: number | string
+    month: number | string
+    day: number | string
     date: string
     maxdate: string
     mindate: string
@@ -133,10 +133,10 @@ type DatePickerAttributes = {
 type EditableTextBaseAttributes = {
     keyboardtype: string
     returnkeytype: string
-    editable: boolean
+    editable: boolean | string
     updatetexttrigger: string
     autocapitalizationtype: string
-    autocorrect: boolean
+    autocorrect: boolean | string
     hint: string
 };
 
@@ -145,20 +145,20 @@ type HtmlViewAttributes = {
 };
 
 type ImageAttributes = {
-    isloading: boolean
+    isloading: boolean | string
     stretch: string
     src: string
 };
 
 type LabelAttributes = {
-    textwrap: boolean
+    textwrap: boolean | string
 };
 
 type AbsoluteLayoutAttributes = {
 };
 
 type DockLayoutAttributes = {
-    stretchlastchild: boolean
+    stretchlastchild: boolean | string
 };
 
 type GridLayoutAttributes = {
@@ -168,10 +168,10 @@ type GridLayoutAttributes = {
 
 type LayoutBaseAttributes = {
     padding: string
-    paddingbottom: number
-    paddingleft: number
-    paddingright: number
-    paddingtop: number
+    paddingbottom: number | string
+    paddingleft: number | string
+    paddingright: number | string
+    paddingtop: number | string
 };
 
 type StackLayoutAttributes = {
@@ -180,22 +180,22 @@ type StackLayoutAttributes = {
 
 type WrapLayoutAttributes = {
     orientation: string
-    itemwidth: number
-    itemheight: number
+    itemwidth: number | string
+    itemheight: number | string
 };
 
 type ListPickerAttributes = {
-    selectedindex: number
+    selectedindex: number | string
 };
 
 type ListViewAttributes = {
     itemloading: string
     itemtap: string
     loadmoreitems: string
-    isscrolling: boolean
+    isscrolling: boolean | string
     itemtemplate: string
     separatorcolor: string
-    rowheight: number
+    rowheight: number | string
     items: string
 };
 
@@ -206,8 +206,8 @@ type PageAttributes = {
     navigatedto: string
     navigatingfrom: string
     navigatedfrom: string
-    backgroundspanunderstatusbar: boolean
-    actionbarhidden: boolean
+    backgroundspanunderstatusbar: boolean | string
+    actionbarhidden: boolean | string
     css: string
     actionbar: string
     modal: string
@@ -218,8 +218,8 @@ type PlaceholderAttributes = {
 };
 
 type ProgressAttributes = {
-    value: number
-    maxvalue: number
+    value: number | string
+    maxvalue: number | string
 };
 
 type ProxyViewContainerAttributes = {
@@ -233,10 +233,10 @@ type RepeaterAttributes = {
 
 type ScrollViewAttributes = {
     scroll: string
-    verticaloffset: number
-    horizontaloffset: number
-    scrollableheight: number
-    scrollablewidth: number
+    verticaloffset: number | string
+    horizontaloffset: number | string
+    scrollableheight: number | string
+    scrollablewidth: number | string
     orientation: string
 };
 
@@ -250,25 +250,25 @@ type SearchBarAttributes = {
 };
 
 type SegmentedBarAttributes = {
-    selectedindex: number
+    selectedindex: number | string
     selectedbackgroundcolor: string
     items: string
     selectedindexchanged: string
 };
 
 type SliderAttributes = {
-    value: number
-    minvalue: number
-    maxvalue: number
+    value: number | string
+    minvalue: number | string
+    maxvalue: number | string
 };
 
 type SwitchAttributes = {
-    checked: boolean
+    checked: boolean | string
 };
 
 type TabViewAttributes = {
     items: string
-    selectedindex: number
+    selectedindex: number | string
     selectedcolor: string
     tabsbackgroundcolor: string
     selectedindexchanged: string
@@ -277,27 +277,27 @@ type TabViewAttributes = {
 type TextBaseAttributes = {
     text: string
     textalignment: string
-    fontsize: number
+    fontsize: number | string
     formattedtext: string
 };
 
 type TextFieldAttributes = {
     returnpress: string
-    secure: boolean
+    secure: boolean | string
 };
 
 type TextViewAttributes = {
 };
 
 type TimePickerAttributes = {
-    hour: number
-    minute: number
+    hour: number | string
+    minute: number | string
     time: string
-    maxhour: number
-    maxminute: number
-    minhour: number
-    minminute: number
-    minuteinterval: number
+    maxhour: number | string
+    maxminute: number | string
+    minhour: number | string
+    minminute: number | string
+    minuteinterval: number | string
 };
 
 type WebViewAttributes = {
@@ -306,8 +306,8 @@ type WebViewAttributes = {
     navigationtypes: string
     url: string
     src: string
-    cangoback: boolean
-    cangoforward: boolean
+    cangoback: boolean | string
+    cangoforward: boolean | string
 };
 
 
