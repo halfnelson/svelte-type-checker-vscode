@@ -24,14 +24,15 @@ export function serviceContainerForUri(documentUri: string): LanguageServiceCont
     if (services.has(tsconfigPath)) {
         service = services.get(tsconfigPath)!;
     } else {
-        service = createLanguageService(tsconfigPath);
+        const packageJsonPath = ts.findConfigFile(searchDir, ts.sys.fileExists, 'package.json');
+        service = createLanguageService(tsconfigPath, packageJsonPath);
         services.set(tsconfigPath, service);
     }
 
     return service;
 }
 
-export function createLanguageService(tsconfigPath: string): LanguageServiceContainer {
+function createLanguageService(tsconfigPath: string, packageJsonPath?: string): LanguageServiceContainer {
 
     const workspacePath = tsconfigPath ? dirname(tsconfigPath) : '';
     const documents = new Map<string, DocumentSnapshot>();
@@ -64,27 +65,45 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
     }
 
     //we force some options
-    let forcedOptions: ts.CompilerOptions = { 
+    let forcedOptions: ts.CompilerOptions = {
         noEmit: true,
         declaration: false,
         jsx: ts.JsxEmit.Preserve,
-        jsxFactory: "h",
         skipLibCheck: true
     }
 
     compilerOptions = { ...compilerOptions, ...forcedOptions }
+    //if not specified or not a svelte one, detect the svelte vs svelte-native and use that
+    if (!compilerOptions.jsxFactory || !compilerOptions.jsxFactory.startsWith("svelte")) {
+        //default to regular svelte
+        compilerOptions.jsxFactory = "svelte.createElement"
+
+        //override if we detect nativescript
+        if (packageJsonPath) {
+            let pjson = require('./package.json');
+            if (pjson.nativescript) {
+                compilerOptions.jsxFactory = "svelteNative.createElement"
+            }
+        }
+    }
+    console.log("Creating language service using config:" + tsconfigPath + " and JSX Flavour: " + compilerOptions.jsxFactory == "svelte.createElement" ? "Svelte" : "Svelte Native")
+
     const svelteTsPath = dirname(require.resolve('svelte2tsx'))
-    const svelteTsxFiles = ['./svelte-shims.d.ts', './svelte-jsx.d.ts'].map(f => ts.sys.resolvePath(resolve(svelteTsPath, f)));
+    const svelteTsxFiles = [
+        ts.sys.resolvePath(resolve(svelteTsPath, './svelte-shims.d.ts')),
+        ts.sys.resolvePath(resolve(__dirname, "../tsx/sveltenative-jsx.d.ts")),
+        ts.sys.resolvePath(resolve(__dirname, "../tsx/svelte-jsx.d.ts"))
+    ];
 
     const host: ts.LanguageServiceHost = {
         getCompilationSettings: () => compilerOptions,
-        getScriptFileNames: () => Array.from(new Set([...files, ...Array.from(documents.keys()).map(k => uriToFilePath(k) || k) , ...svelteTsxFiles].map(useSvelteTsxName))),
+        getScriptFileNames: () => Array.from(new Set([...files, ...Array.from(documents.keys()).map(k => uriToFilePath(k) || k), ...svelteTsxFiles].map(useSvelteTsxName))),
         getScriptVersion(fileName: string) {
             const doc = getSnapshot(filePathToUri(fileName));
             return String(doc.version)
         },
         getScriptSnapshot(fileName: string): ts.IScriptSnapshot | undefined {
-           // console.log("get script snapshot", fileName);
+            // console.log("get script snapshot", fileName);
             return getSnapshot(filePathToUri(fileName));
         },
         getCurrentDirectory: () => workspacePath,
@@ -98,7 +117,7 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
                     compilerOptions,
                     {
                         fileExists,
-                        readFile   
+                        readFile
                     },
                 );
 
@@ -122,7 +141,7 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
     };
 
     function updateSnapshot(uri: string, content: string, version: number) {
-      //  console.log("update document", document.getFilePath());
+        //  console.log("update document", document.getFilePath());
         let snap = getSnapshot(uri);
         if (snap && snap.version == version) return snap;
 
@@ -144,10 +163,10 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
             return doc;
         }
 
-        return DocumentSnapshot.create(uri,  ts.sys.readFile(uriToFilePath(uri)) || '', 0);
+        return DocumentSnapshot.create(uri, ts.sys.readFile(uriToFilePath(uri)) || '', 0);
     }
 
- 
+
 
     function fileExists(filename: string) {
         if (isSvelteTsx(filename)) {
@@ -159,7 +178,7 @@ export function createLanguageService(tsconfigPath: string): LanguageServiceCont
     function readFile(fileName: string) {
         if (!isSvelteTsx(fileName)) {
             return ts.sys.readFile(fileName)
-        } 
+        }
         return ts.sys.readFile(originalNameFromSvelteTsx(fileName));
     }
 
