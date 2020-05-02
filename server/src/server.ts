@@ -302,7 +302,6 @@ connection.onCompletion(
 					source: c.source
 				}
 			} as CompletionItem
-			console.log("Returning item ", item.label, item.insertText, item.kind)
 			return item;
 		})
 	}
@@ -343,6 +342,11 @@ connection.onCompletionResolve(
 			item.documentation = documentation;
 			delete item.data;
 		}
+		if (item.detail && item.detail.includes("(JSX attribute)")) {
+			item.detail = item.detail.replace("(JSX attribute)","(property)");
+			item.kind = CompletionItemKind.Property
+		}
+		console.log("resolved", item);
 		return item;
 	}
 );

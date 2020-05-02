@@ -2,6 +2,7 @@ import * as ts from 'typescript';
 import { DocumentSnapshot } from './DocumentSnapshot';
 import { dirname, resolve } from 'path';
 import { uriToFilePath, filePathToUri, useSvelteTsxName, useSvelteOriginalName, isSvelteTsx, originalNameFromSvelteTsx } from './util';
+import { fstat } from 'fs';
 
 
 
@@ -73,6 +74,12 @@ function createLanguageService(tsconfigPath: string, packageJsonPath?: string): 
     }
 
     compilerOptions = { ...compilerOptions, ...forcedOptions }
+    const svelteTsPath = dirname(require.resolve('svelte2tsx'))
+ 
+    const svelteTsxFiles = [
+        ts.sys.resolvePath(resolve(svelteTsPath, './svelte-shims.d.ts')),
+        ts.sys.resolvePath(resolve(__dirname, "../tsx/svelte-jsx.d.ts"))
+    ];
     //if not specified or not a svelte one, detect the svelte vs svelte-native and use that
     if (!compilerOptions.jsxFactory || !compilerOptions.jsxFactory.startsWith("svelte")) {
         //default to regular svelte
@@ -80,20 +87,39 @@ function createLanguageService(tsconfigPath: string, packageJsonPath?: string): 
 
         //override if we detect nativescript
         if (packageJsonPath) {
-            let pjson = require('./package.json');
-            if (pjson.nativescript) {
+            try {
+                require.resolve('@nativescript/core', { paths: [ dirname(packageJsonPath) ]});
                 compilerOptions.jsxFactory = "svelteNative.createElement"
+            } catch (e) {
+                //we stay regular svelte
             }
         }
     }
-    console.log("Creating language service using config:" + tsconfigPath + " and JSX Flavour: " + compilerOptions.jsxFactory == "svelte.createElement" ? "Svelte" : "Svelte Native")
 
-    const svelteTsPath = dirname(require.resolve('svelte2tsx'))
-    const svelteTsxFiles = [
-        ts.sys.resolvePath(resolve(svelteTsPath, './svelte-shims.d.ts')),
-        ts.sys.resolvePath(resolve(__dirname, "../tsx/sveltenative-jsx.d.ts")),
-        ts.sys.resolvePath(resolve(__dirname, "../tsx/svelte-jsx.d.ts"))
-    ];
+    if (compilerOptions.jsxFactory == "svelteNative.createElement" && packageJsonPath) {
+        let baseDir: (string | undefined)  = dirname(packageJsonPath);
+        while (baseDir) {
+            if (ts.sys.directoryExists(resolve(baseDir, 'jsxtypes'))) break;
+            try {
+                baseDir = dirname(baseDir);
+            } catch (e) {
+                console.warn("couldn't find a jsxtypes folder, in parents of", dirname(packageJsonPath));
+                baseDir = undefined;
+            }
+        }
+
+        if (baseDir) {
+            const jsxTypesPath = ts.sys.resolvePath(resolve(baseDir, "./jsxtypes"));
+            if (ts.sys.directoryExists(jsxTypesPath)) {
+                ts.sys.readDirectory(jsxTypesPath, [".d.ts"]).forEach(f => {
+                    console.log("adding svelte native type file: ", f);
+                    svelteTsxFiles.push(f)
+                });
+            }
+        }
+    }
+
+    console.log("Creating language service using config:" + tsconfigPath + " and JSX Flavour: " + (compilerOptions.jsxFactory == "svelte.createElement" ? "Svelte" : "Svelte Native"))
 
     const host: ts.LanguageServiceHost = {
         getCompilationSettings: () => compilerOptions,
