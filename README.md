@@ -1,3 +1,6 @@
+ __Warning__
+> You probably want https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode most of the code in this repo has been incorporated into the official svelte plugin. This repo will live on until the issues are closed and the svelte-native support lands in the official plugin
+
 # Svelte Type Checker
 
 Provides deep type checking for Svelte files by leaning on the Typescript language service.
